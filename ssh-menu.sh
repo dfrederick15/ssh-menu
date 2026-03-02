@@ -217,7 +217,13 @@ cmd_delete() {
 # ---------------------------------------------------------------------------
 
 main_menu() {
+    # Enter the alternate screen buffer so the menu leaves no scrollback history.
+    # The EXIT trap restores the original screen on quit, Ctrl-C, or any error exit.
+    if [[ -t 1 ]] && tput smcup 2>/dev/null; then
+        trap 'tput rmcup 2>/dev/null || true' EXIT
+    fi
     while true; do
+        if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
         echo ""
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
         echo "${C_CYAN}${C_BOLD}        SSH Menu${C_RESET}"
