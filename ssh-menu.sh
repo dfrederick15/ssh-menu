@@ -9,6 +9,26 @@ CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
 
 # ---------------------------------------------------------------------------
+# Colors (only when stdout is a terminal that supports color)
+# ---------------------------------------------------------------------------
+
+if [[ -t 1 ]] && tput colors &>/dev/null && [[ $(tput colors) -ge 8 ]]; then
+    C_RESET=$(tput sgr0)
+    C_BOLD=$(tput bold)
+    C_CYAN=$(tput setaf 6)
+    C_YELLOW=$(tput setaf 3)
+    C_GREEN=$(tput setaf 2)
+    C_RED=$(tput setaf 1)
+else
+    C_RESET=""
+    C_BOLD=""
+    C_CYAN=""
+    C_YELLOW=""
+    C_GREEN=""
+    C_RED=""
+fi
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -30,7 +50,7 @@ _list_servers() {
     local count
     count=$(_server_count)
     if [[ "$count" -eq 0 ]]; then
-        echo "  (no servers saved)"
+        echo "  ${C_YELLOW}(no servers saved)${C_RESET}"
         return
     fi
 
@@ -54,7 +74,7 @@ _list_servers() {
         user=$(_get_field "$line" 2)
         host=$(_get_field "$line" 3)
         port=$(_get_field "$line" 4)
-        printf "  %2d) %-20s %*s@%-25s %s\n" "$i" "$name" "$max_user_len" "$user" "$host" "$port"
+        printf "  ${C_YELLOW}${C_BOLD}%2d)${C_RESET} ${C_BOLD}%-20s${C_RESET} ${C_CYAN}%*s@%-25s${C_RESET} %s\n" "$i" "$name" "$max_user_len" "$user" "$host" "$port"
         ((i++))
     done < "$CONFIG_FILE"
 }
@@ -77,21 +97,21 @@ _prompt_server_fields() {
         read -rp "  Name [${default_name}]: " _name
         _name="${_name:-$default_name}"
         [[ -n "$_name" ]] && break
-        echo "  Name cannot be empty."
+        echo "  ${C_RED}Name cannot be empty.${C_RESET}"
     done
 
     while true; do
         read -rp "  User [${default_user}]: " _user
         _user="${_user:-$default_user}"
         [[ -n "$_user" ]] && break
-        echo "  User cannot be empty."
+        echo "  ${C_RED}User cannot be empty.${C_RESET}"
     done
 
     while true; do
         read -rp "  Host [${default_host}]: " _host
         _host="${_host:-$default_host}"
         [[ -n "$_host" ]] && break
-        echo "  Host cannot be empty."
+        echo "  ${C_RED}Host cannot be empty.${C_RESET}"
     done
 
     while true; do
@@ -100,7 +120,7 @@ _prompt_server_fields() {
         if _validate_port "$_port"; then
             break
         fi
-        echo "  Port must be a number between 1 and 65535."
+        echo "  ${C_RED}Port must be a number between 1 and 65535.${C_RESET}"
     done
 }
 
@@ -109,7 +129,7 @@ _select_server() {
     local total
     total=$(_server_count)
     if [[ "$total" -eq 0 ]]; then
-        echo "  No servers saved yet."
+        echo "  ${C_YELLOW}No servers saved yet.${C_RESET}"
         return 1
     fi
     _list_servers
@@ -120,7 +140,7 @@ _select_server() {
             _selected_index="$choice"
             return 0
         fi
-        echo "  Invalid selection. Enter a number between 1 and ${total}."
+        echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
     done
 }
 
@@ -130,16 +150,16 @@ _select_server() {
 
 cmd_add() {
     echo ""
-    echo "--- Add Server ---"
+    echo "${C_BOLD}--- Add Server ---${C_RESET}"
     local _name _user _host _port
     _prompt_server_fields
     echo "${_name}:${_user}:${_host}:${_port}" >> "$CONFIG_FILE"
-    echo "  Saved '${_name}'."
+    echo "  ${C_GREEN}Saved '${_name}'.${C_RESET}"
 }
 
 cmd_connect() {
     echo ""
-    echo "--- Connect to Server ---"
+    echo "${C_BOLD}--- Connect to Server ---${C_RESET}"
     local _selected_line _selected_index
     _select_server "Connect to server" || return 0
     local name user host port
@@ -147,13 +167,13 @@ cmd_connect() {
     user=$(_get_field "$_selected_line" 2)
     host=$(_get_field "$_selected_line" 3)
     port=$(_get_field "$_selected_line" 4)
-    echo "  Connecting to ${name} (${user}@${host}:${port})..."
+    echo "  Connecting to ${C_BOLD}${name}${C_RESET} (${C_CYAN}${user}@${host}:${port}${C_RESET})..."
     ssh -p "$port" "${user}@${host}"
 }
 
 cmd_edit() {
     echo ""
-    echo "--- Edit Server ---"
+    echo "${C_BOLD}--- Edit Server ---${C_RESET}"
     local _selected_line _selected_index
     _select_server "Edit server" || return 0
     local name user host port
@@ -161,7 +181,7 @@ cmd_edit() {
     user=$(_get_field "$_selected_line" 2)
     host=$(_get_field "$_selected_line" 3)
     port=$(_get_field "$_selected_line" 4)
-    echo "  Editing '${name}' (press Enter to keep current value):"
+    echo "  Editing '${C_BOLD}${name}${C_RESET}' (press Enter to keep current value):"
     local _name _user _host _port
     _prompt_server_fields "$name" "$user" "$host" "$port"
     # Replace line in config file
@@ -170,25 +190,25 @@ cmd_edit() {
     awk -v idx="$_selected_index" -v new="${_name}:${_user}:${_host}:${_port}" \
         'NR==idx {print new; next} {print}' "$CONFIG_FILE" > "$tmp_file"
     mv "$tmp_file" "$CONFIG_FILE"
-    echo "  Updated '${_name}'."
+    echo "  ${C_GREEN}Updated '${_name}'.${C_RESET}"
 }
 
 cmd_delete() {
     echo ""
-    echo "--- Delete Server ---"
+    echo "${C_BOLD}--- Delete Server ---${C_RESET}"
     local _selected_line _selected_index
     _select_server "Delete server" || return 0
     local name
     name=$(_get_field "$_selected_line" 1)
-    read -rp "  Delete '${name}'? [y/N]: " confirm
+    read -rp "  Delete '${C_BOLD}${name}${C_RESET}'? [y/N]: " confirm
     if [[ "${confirm,,}" == "y" ]]; then
         local tmp_file
         tmp_file=$(mktemp)
         awk -v idx="$_selected_index" 'NR!=idx' "$CONFIG_FILE" > "$tmp_file"
         mv "$tmp_file" "$CONFIG_FILE"
-        echo "  Deleted '${name}'."
+        echo "  ${C_GREEN}Deleted '${name}'.${C_RESET}"
     else
-        echo "  Cancelled."
+        echo "  ${C_YELLOW}Cancelled.${C_RESET}"
     fi
 }
 
@@ -199,16 +219,16 @@ cmd_delete() {
 main_menu() {
     while true; do
         echo ""
-        echo "=============================="
-        echo "        SSH Menu"
-        echo "=============================="
+        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+        echo "${C_CYAN}${C_BOLD}        SSH Menu${C_RESET}"
+        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
         _list_servers
         echo ""
-        echo "  a) Add server"
-        echo "  c) Connect to server"
-        echo "  e) Edit server"
-        echo "  d) Delete server"
-        echo "  q) Quit"
+        echo "  ${C_YELLOW}${C_BOLD}a)${C_RESET} Add server"
+        echo "  ${C_YELLOW}${C_BOLD}c)${C_RESET} Connect to server"
+        echo "  ${C_YELLOW}${C_BOLD}e)${C_RESET} Edit server"
+        echo "  ${C_YELLOW}${C_BOLD}d)${C_RESET} Delete server"
+        echo "  ${C_YELLOW}${C_BOLD}q)${C_RESET} Quit"
         echo ""
         read -rp "  Choice: " choice
         case "${choice,,}" in
@@ -217,7 +237,7 @@ main_menu() {
             e) cmd_edit ;;
             d) cmd_delete ;;
             q) echo "Goodbye."; exit 0 ;;
-            *) echo "  Unknown option. Please choose a, c, e, d, or q." ;;
+            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d, or q.${C_RESET}" ;;
         esac
     done
 }
