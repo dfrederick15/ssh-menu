@@ -33,6 +33,19 @@ _list_servers() {
         echo "  (no servers saved)"
         return
     fi
+
+    # First pass: find max username length for alignment
+    local max_user_len=0
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local user
+        user=$(_get_field "$line" 2)
+        if [[ ${#user} -gt $max_user_len ]]; then
+            max_user_len=${#user}
+        fi
+    done < "$CONFIG_FILE"
+
+    # Second pass: display with aligned @ symbols and separate port column
     local i=1
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
@@ -41,7 +54,7 @@ _list_servers() {
         user=$(_get_field "$line" 2)
         host=$(_get_field "$line" 3)
         port=$(_get_field "$line" 4)
-        printf "  %2d) %-20s %s@%s:%s\n" "$i" "$name" "$user" "$host" "$port"
+        printf "  %2d) %-20s %*s@%-25s %s\n" "$i" "$name" "$max_user_len" "$user" "$host" "$port"
         ((i++))
     done < "$CONFIG_FILE"
 }
