@@ -95,7 +95,7 @@ _add_server_direct "db1:root:db.internal:2222"
 output=$(bash "$SCRIPT" list)
 _assert_contains "list shows first server name" "web1" "$output"
 _assert_contains "list shows second server name" "db1" "$output"
-_assert_contains "list shows user@host" "ubuntu@web1.example.com:22" "$output"
+_assert_contains "list shows user@host with port in separate column" "ubuntu@web1.example.com" "$output"
 
 # -- Edit --------------------------------------------------------------------
 echo "--- Edit ---"
