@@ -134,6 +134,39 @@ output=$(printf '1\nN\n' | bash "$SCRIPT" delete)
 _assert_contains "delete cancel shows cancelled" "Cancelled" "$output"
 _assert_eq "delete cancel keeps server" "server1:user:host.com:22" "$(cat "$CONFIG_FILE")"
 
+# -- Main menu number shortcut -----------------------------------------------
+echo "--- Main menu number shortcut ---"
+
+# Create a fake ssh to capture invocation without real connection
+FAKE_BIN_DIR=$(mktemp -d)
+cat > "$FAKE_BIN_DIR/ssh" << 'EOF'
+#!/usr/bin/env bash
+echo "SSH_MOCK: $*"
+EOF
+chmod +x "$FAKE_BIN_DIR/ssh"
+OLD_PATH="$PATH"
+export PATH="$FAKE_BIN_DIR:$PATH"
+
+_reset_config
+_add_server_direct "shortcut:bob:myhost.com:2222"
+output=$(printf '1\nq\n' | bash "$SCRIPT")
+_assert_contains "number in main menu shows connecting message" "Connecting to" "$output"
+_assert_contains "number in main menu triggers ssh" "SSH_MOCK: -p 2222 bob@myhost.com" "$output"
+
+# Invalid number (out of range)
+_reset_config
+_add_server_direct "oneserver:bob:myhost.com:22"
+output=$(printf '5\nq\n' | bash "$SCRIPT")
+_assert_contains "out-of-range number shows error" "Invalid selection" "$output"
+
+# Number when no servers exist
+_reset_config
+output=$(printf '1\nq\n' | bash "$SCRIPT")
+_assert_contains "number with no servers shows error" "No servers saved yet" "$output"
+
+export PATH="$OLD_PATH"
+rm -rf "$FAKE_BIN_DIR"
+
 # -- Port validation ---------------------------------------------------------
 echo "--- Port validation ---"
 

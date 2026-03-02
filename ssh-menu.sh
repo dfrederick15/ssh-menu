@@ -237,6 +237,25 @@ main_menu() {
             e) cmd_edit ;;
             d) cmd_delete ;;
             q) echo "Goodbye."; exit 0 ;;
+            [0-9]*)
+                local total
+                total=$(_server_count)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$total" ]]; then
+                    local _selected_line
+                    _selected_line=$(_get_server_by_index "$choice")
+                    local name user host port
+                    name=$(_get_field "$_selected_line" 1)
+                    user=$(_get_field "$_selected_line" 2)
+                    host=$(_get_field "$_selected_line" 3)
+                    port=$(_get_field "$_selected_line" 4)
+                    echo "  Connecting to ${C_BOLD}${name}${C_RESET} (${C_CYAN}${user}@${host}:${port}${C_RESET})..."
+                    ssh -p "$port" "${user}@${host}"
+                elif [[ "$total" -eq 0 ]]; then
+                    echo "  ${C_RED}No servers saved yet.${C_RESET}"
+                else
+                    echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
+                fi
+                ;;
             *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d, or q.${C_RESET}" ;;
         esac
     done
