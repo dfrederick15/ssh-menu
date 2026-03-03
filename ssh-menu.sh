@@ -29,6 +29,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Terminal title
+# ---------------------------------------------------------------------------
+
+_set_title() {
+    # Set the terminal window/tab title via OSC escape sequence.
+    # No-op when stdout is not a terminal.
+    [[ -t 1 ]] || return 0
+    printf '\033]0;%s\007' "$*"
+}
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -145,6 +156,28 @@ _select_server() {
 }
 
 # ---------------------------------------------------------------------------
+# SSH connect helper
+# ---------------------------------------------------------------------------
+
+_connect_ssh() {
+    local name="$1" user="$2" host="$3" port="$4"
+    # Set an initial title with connection info right away.
+    _set_title "ssh: ${name} | ${user}@${host}:${port}"
+    # Remote snippet: update the title with live server stats, then exec the
+    # user's login shell.  Uses only POSIX tools; silently omits fields that
+    # are unavailable (e.g. no /proc on macOS).
+    local _rc
+    _rc='h=$(hostname -f 2>/dev/null||hostname);'
+    _rc+='l=$(cat /proc/loadavg 2>/dev/null|cut -d" " -f1-3);'
+    _rc+='m=$(free -m 2>/dev/null|awk "/^Mem:/{printf \"%d/%dMB\",\$3,\$2}");'
+    _rc+='printf "\033]0;%s%s%s\007" "$h" "${l:+ | load: $l}" "${m:+ | mem: $m}";'
+    _rc+='exec "${SHELL:-bash}" -l'
+    ssh -p "$port" -t "${user}@${host}" "$_rc"
+    # Restore a sensible title after the session ends.
+    _set_title "ssh-menu"
+}
+
+# ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 
@@ -168,7 +201,7 @@ cmd_connect() {
     host=$(_get_field "$_selected_line" 3)
     port=$(_get_field "$_selected_line" 4)
     echo "  Connecting to ${C_BOLD}${name}${C_RESET} (${C_CYAN}${user}@${host}:${port}${C_RESET})..."
-    ssh -p "$port" "${user}@${host}"
+    _connect_ssh "$name" "$user" "$host" "$port"
 }
 
 cmd_edit() {
@@ -217,11 +250,6 @@ cmd_delete() {
 # ---------------------------------------------------------------------------
 
 main_menu() {
-    # Enter the alternate screen buffer so the menu leaves no scrollback history.
-    # The EXIT trap restores the original screen on quit, Ctrl-C, or any error exit.
-    if [[ -t 1 ]] && tput smcup 2>/dev/null; then
-        trap 'tput rmcup 2>/dev/null || true' EXIT
-    fi
     while true; do
         if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
         echo ""
@@ -255,7 +283,7 @@ main_menu() {
                     host=$(_get_field "$_selected_line" 3)
                     port=$(_get_field "$_selected_line" 4)
                     echo "  Connecting to ${C_BOLD}${name}${C_RESET} (${C_CYAN}${user}@${host}:${port}${C_RESET})..."
-                    ssh -p "$port" "${user}@${host}"
+                    _connect_ssh "$name" "$user" "$host" "$port"
                 elif [[ "$total" -eq 0 ]]; then
                     echo "  ${C_RED}No servers saved yet.${C_RESET}"
                 else
