@@ -151,7 +151,7 @@ _reset_config
 _add_server_direct "shortcut:bob:myhost.com:2222"
 output=$(printf '1\nq\n' | bash "$SCRIPT")
 _assert_contains "number in main menu shows connecting message" "Connecting to" "$output"
-_assert_contains "number in main menu triggers ssh" "SSH_MOCK: -p 2222 bob@myhost.com" "$output"
+_assert_contains "number in main menu triggers ssh" "SSH_MOCK: -p 2222 -t bob@myhost.com" "$output"
 
 # Invalid number (out of range)
 _reset_config
