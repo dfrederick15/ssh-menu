@@ -213,6 +213,59 @@ _assert_contains "nonexistent install dir shows error" "does not exist" "$output
 unset SSH_MENU_INSTALL_DIR
 rm -rf "$FAKE_INSTALL_DIR"
 
+# -- Version subcommand ------------------------------------------------------
+echo "--- Version ---"
+
+output=$(bash "$SCRIPT" version)
+_assert_contains "version subcommand outputs version string" "ssh-menu v" "$output"
+
+# Extract the version and ensure it matches semver format
+extracted_version=$(echo "$output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+_assert_contains "version subcommand outputs semver number" "." "$extracted_version"
+
+# -- Install status in main menu ---------------------------------------------
+echo "--- Install status in main menu ---"
+
+# Capture bash path before overriding PATH
+BASH_CMD=$(command -v bash)
+# Build a system PATH that excludes any directory containing an 'ssh-menu' binary,
+# so our fake bins take precedence and the real install (if any) is ignored.
+SYSTEM_PATH=""
+while IFS= read -r dir; do
+    [[ -x "$dir/ssh-menu" ]] && continue   # skip dirs that already have ssh-menu
+    SYSTEM_PATH="${SYSTEM_PATH:+$SYSTEM_PATH:}$dir"
+done < <(echo "$PATH" | tr ':' '\n')
+
+FAKE_EMPTY_PATH=$(mktemp -d)   # directory with no ssh-menu binary
+
+# No ssh-menu in path → should show "Not installed"
+_reset_config
+output=$(PATH="$FAKE_EMPTY_PATH:$SYSTEM_PATH" "$BASH_CMD" "$SCRIPT" <<< 'q')
+_assert_contains "main menu shows not installed status" "Not installed in system path" "$output"
+_assert_contains "main menu shows version in header" "SSH Menu  v" "$output"
+_assert_contains "main menu shows install option when not installed" "i)" "$output"
+
+# Status when current version is installed: place script in fake bin with same VERSION
+FAKE_BIN2=$(mktemp -d)
+cp "$SCRIPT" "$FAKE_BIN2/ssh-menu"
+chmod +x "$FAKE_BIN2/ssh-menu"
+
+output=$(PATH="$FAKE_BIN2:$FAKE_EMPTY_PATH:$SYSTEM_PATH" "$BASH_CMD" "$SCRIPT" <<< 'q')
+_assert_contains "main menu shows installed+current status" "Installed in system path (up to date)" "$output"
+_assert_not_contains "main menu hides install option when current" "i)" "$output"
+
+# Status when an outdated version is installed: place a script with different VERSION
+FAKE_BIN3=$(mktemp -d)
+# Create a script with a different version number
+sed 's/^VERSION="[^"]*"/VERSION="0.0.1"/' "$SCRIPT" > "$FAKE_BIN3/ssh-menu"
+chmod +x "$FAKE_BIN3/ssh-menu"
+
+output=$(PATH="$FAKE_BIN3:$FAKE_EMPTY_PATH:$SYSTEM_PATH" "$BASH_CMD" "$SCRIPT" <<< 'q')
+_assert_contains "main menu shows outdated install status" "Installed in system path (update available" "$output"
+_assert_contains "main menu shows install option when outdated" "i)" "$output"
+
+rm -rf "$FAKE_EMPTY_PATH" "$FAKE_BIN2" "$FAKE_BIN3"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

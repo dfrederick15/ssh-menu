@@ -9,6 +9,8 @@ An interactive Bash script to **save, connect, edit, and delete** your favourite
 - **Add** new servers (name, user, host, port)
 - **Edit** existing server details
 - **Delete** servers you no longer need
+- **Version display** — shows the current version in the menu header
+- **Install-status indicator** — shows whether `ssh-menu` is installed in the system path and whether it is up to date; hides the install option when already at the current version
 - Persistent storage in `~/.config/ssh-menu/servers`
 
 ## Requirements
@@ -44,10 +46,11 @@ sudo ./new-ssh-menu.sh install
 
 ```
 ==============================
-        SSH Menu
+     SSH Menu  v1.0.0
 ==============================
-   1) web-server           alice@web.example.com:22
-   2) db-server            root@db.internal:2222
+  ● Installed in system path (up to date)
+   1) web-server           alice@web.example.com        22
+   2) db-server            root@db.internal             2222
 
   a) Add server
   c) Connect to server
@@ -56,6 +59,12 @@ sudo ./new-ssh-menu.sh install
   q) Quit
 
   Choice:
+```
+
+When `ssh-menu` is **not yet installed** or an **older version** is installed, an additional option is shown:
+
+```
+  i) Install/update to system path
 ```
 
 ### Non-interactive subcommands
@@ -68,6 +77,7 @@ sudo ./new-ssh-menu.sh install
 | `./ssh-menu.sh edit` | Edit a saved server |
 | `./ssh-menu.sh delete` | Delete a saved server |
 | `./ssh-menu.sh install` | Install or update ssh-menu to the system path |
+| `./ssh-menu.sh version` | Print the current version |
 
 ### Custom config location
 
@@ -97,3 +107,7 @@ db-server:root:db.internal:2222
 ```bash
 bash tests/test_ssh_menu.sh
 ```
+
+## Author
+
+Devin Frederick — devin.frederick2012@gmail.com

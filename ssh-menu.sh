@@ -2,8 +2,13 @@
 # ssh-menu.sh — Interactive SSH server manager
 # Stores servers in $SSH_MENU_CONFIG (default: ~/.config/ssh-menu/servers)
 # Config file format (one entry per line): name:user:host:port
+#
+# Author:  Devin Frederick
+# Contact: devin.frederick2012@gmail.com
 
 set -euo pipefail
+
+VERSION="1.0.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
@@ -136,6 +141,23 @@ _prompt_server_fields() {
         fi
         echo "  ${C_RED}Port must be a number between 1 and 65535.${C_RESET}"
     done
+}
+
+_check_install_status() {
+    # Prints one of: "not_installed", "installed_current", "installed_outdated"
+    local installed_path
+    installed_path=$(command -v ssh-menu 2>/dev/null || true)
+    if [[ -z "$installed_path" ]]; then
+        echo "not_installed"
+        return
+    fi
+    local installed_version
+    installed_version=$(grep -m1 '^VERSION=' "$installed_path" 2>/dev/null | cut -d'"' -f2 || true)
+    if [[ "$installed_version" == "$VERSION" ]]; then
+        echo "installed_current"
+    else
+        echo "installed_outdated"
+    fi
 }
 
 _select_server() {
@@ -298,15 +320,34 @@ main_menu() {
         if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
         echo ""
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
-        echo "${C_CYAN}${C_BOLD}        SSH Menu${C_RESET}"
+        echo "${C_CYAN}${C_BOLD}     SSH Menu  v${VERSION}${C_RESET}"
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+
+        # Determine install status and display it
+        local install_status
+        install_status=$(_check_install_status)
+        case "$install_status" in
+            installed_current)
+                echo "  ${C_GREEN}● Installed in system path (up to date)${C_RESET}"
+                ;;
+            installed_outdated)
+                echo "  ${C_YELLOW}● Installed in system path (update available: v${VERSION})${C_RESET}"
+                ;;
+            not_installed)
+                echo "  ${C_RED}● Not installed in system path${C_RESET}"
+                ;;
+        esac
+
         _list_servers
         echo ""
         echo "  ${C_YELLOW}${C_BOLD}a)${C_RESET} Add server"
         echo "  ${C_YELLOW}${C_BOLD}c)${C_RESET} Connect to server"
         echo "  ${C_YELLOW}${C_BOLD}e)${C_RESET} Edit server"
         echo "  ${C_YELLOW}${C_BOLD}d)${C_RESET} Delete server"
-        echo "  ${C_YELLOW}${C_BOLD}i)${C_RESET} Install/update to system path"
+        # Only show the install option when not already up-to-date in the system path
+        if [[ "$install_status" != "installed_current" ]]; then
+            echo "  ${C_YELLOW}${C_BOLD}i)${C_RESET} Install/update to system path"
+        fi
         echo "  ${C_YELLOW}${C_BOLD}q)${C_RESET} Quit"
         echo ""
         read -rp "  Choice: " choice
@@ -315,7 +356,13 @@ main_menu() {
             c) cmd_connect ;;
             e) cmd_edit ;;
             d) cmd_delete ;;
-            i) cmd_install ;;
+            i)
+                if [[ "$install_status" != "installed_current" ]]; then
+                    cmd_install
+                else
+                    echo "  ${C_RED}Unknown option. Please choose a, c, e, d, or q.${C_RESET}"
+                fi
+                ;;
             q) echo "Goodbye."; exit 0 ;;
             [0-9]*)
                 local total
@@ -336,7 +383,7 @@ main_menu() {
                     echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
                 fi
                 ;;
-            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d, i, or q.${C_RESET}" ;;
+            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d$([ "$install_status" != "installed_current" ] && echo ", i"), or q.${C_RESET}" ;;
         esac
     done
 }
@@ -355,5 +402,6 @@ case "${1:-}" in
     delete)  shift; cmd_delete "$@" ;;
     install) shift; cmd_install "$@" ;;
     list)    _list_servers ;;
+    version) echo "ssh-menu v${VERSION}" ;;
     *)       main_menu ;;
 esac
