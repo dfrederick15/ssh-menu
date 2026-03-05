@@ -213,6 +213,44 @@ _assert_contains "nonexistent install dir shows error" "does not exist" "$output
 unset SSH_MENU_INSTALL_DIR
 rm -rf "$FAKE_INSTALL_DIR"
 
+# -- Version and install status in main menu ---------------------------------
+echo "--- Version & install status in main menu ---"
+
+# Version number appears in main menu header
+_reset_config
+output=$(printf 'q\n' | bash "$SCRIPT")
+_assert_contains "main menu shows version number" "v1.0.0" "$output"
+
+# Install status shown when not installed
+FAKE_INSTALL_DIR2=$(mktemp -d)
+export SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR2"
+_reset_config
+output=$(printf 'q\n' | SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR2" bash "$SCRIPT")
+_assert_contains "main menu shows not-installed status" "not installed to system path" "$output"
+_assert_contains "main menu shows install option when not installed" "i)" "$output"
+
+# Install option hidden when script is up to date (running from install target)
+bash "$SCRIPT" install >/dev/null 2>&1
+output=$(printf 'q\n' | SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR2" bash "$FAKE_INSTALL_DIR2/ssh-menu")
+_assert_contains "main menu shows up-to-date status" "up to date" "$output"
+_assert_not_contains "main menu hides install option when current" "i)" "$output"
+
+# Install option shown when installed version differs (simulate outdated by installing then changing VERSION)
+OUTDATED_SCRIPT=$(mktemp)
+sed 's/^VERSION="[^"]*"/VERSION="0.9.0"/' "$SCRIPT" > "$OUTDATED_SCRIPT"
+chmod +x "$OUTDATED_SCRIPT"
+output=$(printf 'q\n' | SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR2" bash "$OUTDATED_SCRIPT")
+_assert_contains "main menu shows outdated status" "available" "$output"
+_assert_contains "main menu shows install option when outdated" "i)" "$output"
+rm -f "$OUTDATED_SCRIPT"
+
+# Typing 'i' when already current shows unknown option error
+output=$(printf 'i\nq\n' | SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR2" bash "$FAKE_INSTALL_DIR2/ssh-menu")
+_assert_contains "typing i when current shows unknown option" "Unknown option" "$output"
+
+unset SSH_MENU_INSTALL_DIR
+rm -rf "$FAKE_INSTALL_DIR2"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

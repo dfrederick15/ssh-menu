@@ -2,6 +2,11 @@
 # ssh-menu.sh — Interactive SSH server manager
 # Stores servers in $SSH_MENU_CONFIG (default: ~/.config/ssh-menu/servers)
 # Config file format (one entry per line): name:user:host:port
+#
+# Author:  Devin Frederick
+# Contact: devin.frederick2012@gmail.com
+
+VERSION="1.0.0"
 
 set -euo pipefail
 
@@ -290,6 +295,41 @@ cmd_install() {
 }
 
 # ---------------------------------------------------------------------------
+# Install status helper
+# ---------------------------------------------------------------------------
+
+_install_status() {
+    # Outputs one of: "not_installed", "outdated", or "current"
+    local target="$INSTALL_TARGET"
+
+    if [[ ! -f "$target" ]]; then
+        echo "not_installed"
+        return
+    fi
+
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+    if [[ "$script_path" == "$target" ]]; then
+        echo "current"
+        return
+    fi
+
+    local installed_version
+    installed_version=$(_get_installed_version)
+
+    if [[ "$installed_version" == "$VERSION" ]]; then
+        echo "current"
+    else
+        echo "outdated"
+    fi
+}
+
+_get_installed_version() {
+    grep -m1 '^VERSION=' "$INSTALL_TARGET" 2>/dev/null | cut -d'"' -f2
+}
+
+# ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
 
@@ -298,24 +338,56 @@ main_menu() {
         if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
         echo ""
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
-        echo "${C_CYAN}${C_BOLD}        SSH Menu${C_RESET}"
+        echo "${C_CYAN}${C_BOLD}     SSH Menu v${VERSION}${C_RESET}"
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
         _list_servers
         echo ""
+
+        local status
+        status=$(_install_status)
+
+        local valid_opts
+        if [[ "$status" != "current" ]]; then
+            valid_opts="a, c, e, d, i, or q"
+        else
+            valid_opts="a, c, e, d, or q"
+        fi
+
         echo "  ${C_YELLOW}${C_BOLD}a)${C_RESET} Add server"
         echo "  ${C_YELLOW}${C_BOLD}c)${C_RESET} Connect to server"
         echo "  ${C_YELLOW}${C_BOLD}e)${C_RESET} Edit server"
         echo "  ${C_YELLOW}${C_BOLD}d)${C_RESET} Delete server"
-        echo "  ${C_YELLOW}${C_BOLD}i)${C_RESET} Install/update to system path"
+        if [[ "$status" != "current" ]]; then
+            echo "  ${C_YELLOW}${C_BOLD}i)${C_RESET} Install/update to system path"
+        fi
         echo "  ${C_YELLOW}${C_BOLD}q)${C_RESET} Quit"
         echo ""
+
+        case "$status" in
+            current)
+                echo "  ${C_GREEN}System: installed at ${INSTALL_TARGET} (v${VERSION}, up to date)${C_RESET}" ;;
+            outdated)
+                local installed_version
+                installed_version=$(_get_installed_version)
+                echo "  ${C_YELLOW}System: ${INSTALL_TARGET} has v${installed_version} — v${VERSION} available, select i to update${C_RESET}" ;;
+            not_installed)
+                echo "  ${C_YELLOW}System: not installed to system path — select i to install${C_RESET}" ;;
+        esac
+        echo ""
+
         read -rp "  Choice: " choice
         case "${choice,,}" in
             a) cmd_add ;;
             c) cmd_connect ;;
             e) cmd_edit ;;
             d) cmd_delete ;;
-            i) cmd_install ;;
+            i)
+                if [[ "$status" != "current" ]]; then
+                    cmd_install
+                else
+                    echo "  ${C_RED}Unknown option. Please choose ${valid_opts}.${C_RESET}"
+                fi
+                ;;
             q) echo "Goodbye."; exit 0 ;;
             [0-9]*)
                 local total
@@ -336,7 +408,9 @@ main_menu() {
                     echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
                 fi
                 ;;
-            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d, i, or q.${C_RESET}" ;;
+            *)
+                echo "  ${C_RED}Unknown option. Please choose ${valid_opts}.${C_RESET}"
+                ;;
         esac
     done
 }
