@@ -8,6 +8,9 @@ set -euo pipefail
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
 
+INSTALL_DIR="${SSH_MENU_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_TARGET="$INSTALL_DIR/ssh-menu"
+
 # ---------------------------------------------------------------------------
 # Colors (only when stdout is a terminal that supports color)
 # ---------------------------------------------------------------------------
@@ -246,6 +249,47 @@ cmd_delete() {
 }
 
 # ---------------------------------------------------------------------------
+# Install / update
+# ---------------------------------------------------------------------------
+
+cmd_install() {
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    local target="$INSTALL_TARGET"
+
+    echo ""
+    echo "${C_BOLD}--- Install ssh-menu ---${C_RESET}"
+
+    if [[ "$script_path" == "$target" ]]; then
+        echo "  ${C_YELLOW}ssh-menu is already installed at '${target}'.${C_RESET}"
+        echo "  ${C_YELLOW}To update, run the new version of ssh-menu.sh with the install command.${C_RESET}"
+        return 0
+    fi
+
+    local install_dir
+    install_dir=$(dirname "$target")
+    if [[ ! -d "$install_dir" ]]; then
+        echo "  ${C_RED}Install directory '${install_dir}' does not exist.${C_RESET}"
+        return 1
+    fi
+
+    if [[ ! -w "$install_dir" ]]; then
+        echo "  ${C_RED}No write permission to '${install_dir}'. Try running with sudo.${C_RESET}"
+        return 1
+    fi
+
+    if [[ -f "$target" ]]; then
+        echo "  Updating ssh-menu at '${C_BOLD}${target}${C_RESET}'..."
+    else
+        echo "  Installing ssh-menu to '${C_BOLD}${target}${C_RESET}'..."
+    fi
+
+    cp -f "$script_path" "$target"
+    chmod +x "$target"
+    echo "  ${C_GREEN}Done! You can now run 'ssh-menu' from anywhere.${C_RESET}"
+}
+
+# ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
 
@@ -262,6 +306,7 @@ main_menu() {
         echo "  ${C_YELLOW}${C_BOLD}c)${C_RESET} Connect to server"
         echo "  ${C_YELLOW}${C_BOLD}e)${C_RESET} Edit server"
         echo "  ${C_YELLOW}${C_BOLD}d)${C_RESET} Delete server"
+        echo "  ${C_YELLOW}${C_BOLD}i)${C_RESET} Install/update to system path"
         echo "  ${C_YELLOW}${C_BOLD}q)${C_RESET} Quit"
         echo ""
         read -rp "  Choice: " choice
@@ -270,6 +315,7 @@ main_menu() {
             c) cmd_connect ;;
             e) cmd_edit ;;
             d) cmd_delete ;;
+            i) cmd_install ;;
             q) echo "Goodbye."; exit 0 ;;
             [0-9]*)
                 local total
@@ -290,7 +336,7 @@ main_menu() {
                     echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
                 fi
                 ;;
-            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d, or q.${C_RESET}" ;;
+            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d, i, or q.${C_RESET}" ;;
         esac
     done
 }
@@ -307,6 +353,7 @@ case "${1:-}" in
     connect) shift; cmd_connect "$@" ;;
     edit)    shift; cmd_edit "$@" ;;
     delete)  shift; cmd_delete "$@" ;;
+    install) shift; cmd_install "$@" ;;
     list)    _list_servers ;;
     *)       main_menu ;;
 esac
