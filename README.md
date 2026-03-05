@@ -22,9 +22,17 @@ An interactive Bash script to **save, connect, edit, and delete** your favourite
 # Clone or download the repository, then make the script executable
 chmod +x ssh-menu.sh
 
-# Optionally, add it to your PATH
-cp ssh-menu.sh /usr/local/bin/ssh-menu
+# Install to the system path (makes 'ssh-menu' available from any directory)
+sudo ./ssh-menu.sh install
+
+# To update an existing installation, run the new version with the install command
+sudo ./new-ssh-menu.sh install
 ```
+
+> **Custom install directory:** Set `SSH_MENU_INSTALL_DIR` to override the default `/usr/local/bin`:
+> ```bash
+> SSH_MENU_INSTALL_DIR=~/.local/bin ./ssh-menu.sh install
+> ```
 
 ## Usage
 
@@ -59,6 +67,7 @@ cp ssh-menu.sh /usr/local/bin/ssh-menu
 | `./ssh-menu.sh connect` | Connect to a saved server |
 | `./ssh-menu.sh edit` | Edit a saved server |
 | `./ssh-menu.sh delete` | Delete a saved server |
+| `./ssh-menu.sh install` | Install or update ssh-menu to the system path |
 
 ### Custom config location
 

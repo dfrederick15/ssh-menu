@@ -177,6 +177,42 @@ _assert_contains "port validation rejects non-numeric" "Port must be a number" "
 _assert_contains "port validation accepts valid port" "Saved 'testserver'" "$output"
 _assert_eq "port validation writes correct port" "testserver:testuser:test.host.com:9999" "$(cat "$CONFIG_FILE")"
 
+# -- Install -----------------------------------------------------------------
+echo "--- Install ---"
+
+FAKE_INSTALL_DIR=$(mktemp -d)
+export SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR"
+
+# Fresh install
+output=$(bash "$SCRIPT" install)
+_assert_contains "install shows installing message" "Installing ssh-menu to" "$output"
+_assert_contains "install shows done message" "Done!" "$output"
+_assert_eq "install creates executable file" "0" "$([ -x "$FAKE_INSTALL_DIR/ssh-menu" ]; echo $?)"
+
+# Update (install again over existing file)
+output=$(bash "$SCRIPT" install)
+_assert_contains "update shows updating message" "Updating ssh-menu at" "$output"
+_assert_contains "update shows done message" "Done!" "$output"
+
+# Already installed (running from install target)
+output=$(SSH_MENU_INSTALL_DIR="$FAKE_INSTALL_DIR" bash "$FAKE_INSTALL_DIR/ssh-menu" install)
+_assert_contains "already installed shows message" "already installed" "$output"
+
+# No write permission
+NO_WRITE_DIR=$(mktemp -d)
+chmod -w "$NO_WRITE_DIR"
+output=$(SSH_MENU_INSTALL_DIR="$NO_WRITE_DIR" bash "$SCRIPT" install 2>&1 || true)
+_assert_contains "no write permission shows error" "No write permission" "$output"
+chmod +w "$NO_WRITE_DIR"
+rm -rf "$NO_WRITE_DIR"
+
+# Non-existent install directory
+output=$(SSH_MENU_INSTALL_DIR="/nonexistent/path/that/does/not/exist" bash "$SCRIPT" install 2>&1 || true)
+_assert_contains "nonexistent install dir shows error" "does not exist" "$output"
+
+unset SSH_MENU_INSTALL_DIR
+rm -rf "$FAKE_INSTALL_DIR"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
