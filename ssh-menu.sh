@@ -36,6 +36,9 @@ else
     C_RED=""
 fi
 
+# Restore cursor visibility on exit (guards against tput civis left active)
+trap 'tput cnorm 2>/dev/null || true' EXIT
+
 # ---------------------------------------------------------------------------
 # Terminal title
 # ---------------------------------------------------------------------------
@@ -50,6 +53,29 @@ _set_title() {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_read_key() {
+    # Read one keypress; emit a normalised name for special keys.
+    local key seq1 seq2
+    IFS= read -r -s -n1 key
+    if [[ "$key" == $'\x1b' ]]; then
+        IFS= read -r -s -n1 -t 0.1 seq1 || true
+        IFS= read -r -s -n1 -t 0.1 seq2 || true
+        if [[ "$seq1" == '[' ]]; then
+            case "$seq2" in
+                A) printf 'up'   ;;
+                B) printf 'down' ;;
+                *) printf 'esc'  ;;
+            esac
+        else
+            printf 'esc'
+        fi
+    elif [[ -z "$key" || "$key" == $'\n' ]]; then
+        printf 'enter'
+    else
+        printf '%s' "$key"
+    fi
+}
 
 _ensure_config() {
     mkdir -p "$CONFIG_DIR"
@@ -168,6 +194,12 @@ _select_server() {
         echo "  ${C_YELLOW}No servers saved yet.${C_RESET}"
         return 1
     fi
+    # Use arrow-key navigation when stdin is an interactive terminal
+    if [[ -t 0 ]]; then
+        _select_server_interactive "$prompt"
+        return $?
+    fi
+    # Fallback: number-based selection for piped/scripted input
     _list_servers
     while true; do
         read -rp "  $prompt (1-${total}): " choice
@@ -177,6 +209,70 @@ _select_server() {
             return 0
         fi
         echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
+    done
+}
+
+_select_server_interactive() {
+    local prompt="${1:-Select a server}"
+    local -a lines=()
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        lines+=("$line")
+    done < "$CONFIG_FILE"
+    local total=${#lines[@]}
+    local current=0
+
+    # Find max username length for column alignment (mirrors _list_servers)
+    local max_user_len=0
+    local line
+    for line in "${lines[@]}"; do
+        local user; user=$(_get_field "$line" 2)
+        [[ ${#user} -gt $max_user_len ]] && max_user_len=${#user}
+    done
+
+    _draw_interactive_list() {
+        local i
+        for ((i=0; i<total; i++)); do
+            printf "\033[2K"  # clear line before redrawing
+            local entry="${lines[$i]}"
+            local name user host port
+            name=$(_get_field "$entry" 1); user=$(_get_field "$entry" 2)
+            host=$(_get_field "$entry" 3); port=$(_get_field "$entry" 4)
+            if [[ $i -eq $current ]]; then
+                printf "  ${C_GREEN}${C_BOLD}▶ %-20s${C_RESET}  ${C_CYAN}%*s@%-25s${C_RESET}  %s\n" \
+                    "$name" "$max_user_len" "$user" "$host" "$port"
+            else
+                printf "    ${C_BOLD}%-20s${C_RESET}  ${C_CYAN}%*s@%-25s${C_RESET}  %s\n" \
+                    "$name" "$max_user_len" "$user" "$host" "$port"
+            fi
+        done
+        printf "\033[2K  ${C_YELLOW}↑/↓ navigate · Enter select · q cancel${C_RESET}\n"
+    }
+
+    tput civis 2>/dev/null || true  # hide cursor while navigating
+    _draw_interactive_list
+
+    while true; do
+        local key; key=$(_read_key)
+        # Return cursor to the top of the drawn list for redrawing
+        printf "\033[%dA" $((total + 1))
+        case "$key" in
+            up)   current=$(( (current - 1 + total) % total )) ;;
+            down) current=$(( (current + 1) % total )) ;;
+            enter)
+                tput cnorm 2>/dev/null || true
+                printf "\033[%dB\n" $((total + 1))  # advance past drawn area
+                _selected_line="${lines[$current]}"
+                _selected_index=$(( current + 1 ))
+                return 0
+                ;;
+            q|Q)
+                tput cnorm 2>/dev/null || true
+                printf "\033[%dB\n" $((total + 1))
+                return 1
+                ;;
+        esac
+        _draw_interactive_list
     done
 }
 
@@ -316,6 +412,8 @@ cmd_install() {
 # ---------------------------------------------------------------------------
 
 main_menu() {
+    local menu_cursor=0
+
     while true; do
         if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
         echo ""
@@ -323,7 +421,6 @@ main_menu() {
         echo "${C_CYAN}${C_BOLD}     SSH Menu  v${VERSION}${C_RESET}"
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
 
-        # Determine install status and display it
         local install_status
         install_status=$(_check_install_status)
         case "$install_status" in
@@ -340,17 +437,59 @@ main_menu() {
 
         _list_servers
         echo ""
-        echo "  ${C_YELLOW}${C_BOLD}a)${C_RESET} Add server"
-        echo "  ${C_YELLOW}${C_BOLD}c)${C_RESET} Connect to server"
-        echo "  ${C_YELLOW}${C_BOLD}e)${C_RESET} Edit server"
-        echo "  ${C_YELLOW}${C_BOLD}d)${C_RESET} Delete server"
-        # Only show the install option when not already up-to-date in the system path
+
+        # Build the active set of menu items
+        local -a _menu_keys=() _menu_labels=()
+        _menu_keys+=('a'); _menu_labels+=("Add server")
+        _menu_keys+=('c'); _menu_labels+=("Connect to server")
+        _menu_keys+=('e'); _menu_labels+=("Edit server")
+        _menu_keys+=('d'); _menu_labels+=("Delete server")
         if [[ "$install_status" != "installed_current" ]]; then
-            echo "  ${C_YELLOW}${C_BOLD}i)${C_RESET} Install/update to system path"
+            _menu_keys+=('i'); _menu_labels+=("Install/update to system path")
         fi
-        echo "  ${C_YELLOW}${C_BOLD}q)${C_RESET} Quit"
+        _menu_keys+=('q'); _menu_labels+=("Quit")
+
+        local _menu_count=${#_menu_keys[@]}
+        # Keep cursor in bounds if the menu shrank (e.g. install option removed)
+        [[ $menu_cursor -ge $_menu_count ]] && menu_cursor=$((_menu_count - 1))
+
+        local i
+        for ((i=0; i<_menu_count; i++)); do
+            local _key="${_menu_keys[$i]}" _label="${_menu_labels[$i]}"
+            if [[ -t 0 && $i -eq $menu_cursor ]]; then
+                echo "  ${C_GREEN}${C_BOLD}▶ ${_key}) ${_label}${C_RESET}"
+            else
+                echo "  ${C_YELLOW}${C_BOLD}${_key})${C_RESET} ${_label}"
+            fi
+        done
+
+        if [[ -t 0 ]]; then
+            echo ""
+            echo "  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}"
+        fi
         echo ""
-        read -rp "  Choice: " choice
+
+        local choice
+        if [[ -t 0 ]]; then
+            choice=$(_read_key)
+        else
+            read -rp "  Choice: " choice
+        fi
+
+        case "$choice" in
+            up)
+                menu_cursor=$(( (menu_cursor - 1 + _menu_count) % _menu_count ))
+                continue
+                ;;
+            down)
+                menu_cursor=$(( (menu_cursor + 1) % _menu_count ))
+                continue
+                ;;
+            enter)
+                choice="${_menu_keys[$menu_cursor]}"
+                ;;
+        esac
+
         case "${choice,,}" in
             a) cmd_add ;;
             c) cmd_connect ;;
