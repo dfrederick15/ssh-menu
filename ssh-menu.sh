@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
@@ -696,43 +696,44 @@ cmd_tunnel_delete() {
 }
 
 cmd_tunnels() {
-    local tunnel_cursor=0
-    while true; do
-        if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
-        echo ""
-        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
-        echo "${C_CYAN}${C_BOLD}         SSH Tunnels${C_RESET}"
-        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+    local tunnel_cursor=0 full_redraw=1
 
-        _list_tunnels
-        echo ""
+    local -a _tk=('a' 's' 'x' 'e' 'd' 'b')
+    local -a _tl=("Add tunnel" "Start tunnel" "Stop tunnel" \
+                  "Edit tunnel" "Delete tunnel" "Back to main menu")
+    local _tc=${#_tk[@]}
 
-        local -a _tk=() _tl=()
-        _tk+=('a'); _tl+=("Add tunnel")
-        _tk+=('s'); _tl+=("Start tunnel")
-        _tk+=('x'); _tl+=("Stop tunnel")
-        _tk+=('e'); _tl+=("Edit tunnel")
-        _tk+=('d'); _tl+=("Delete tunnel")
-        _tk+=('b'); _tl+=("Back to main menu")
-
-        local _tc=${#_tk[@]}
-        [[ $tunnel_cursor -ge $_tc ]] && tunnel_cursor=$((_tc - 1))
-
+    _draw_tunnel_items() {
         local i
         for ((i=0; i<_tc; i++)); do
-            local _key="${_tk[$i]}" _label="${_tl[$i]}"
+            printf "\033[2K"
             if [[ -t 0 && $i -eq $tunnel_cursor ]]; then
-                echo "  ${C_GREEN}${C_BOLD}▶ ${_key}) ${_label}${C_RESET}"
+                printf "  ${C_GREEN}${C_BOLD}▶ %s) %s${C_RESET}\n" "${_tk[$i]}" "${_tl[$i]}"
             else
-                echo "  ${C_YELLOW}${C_BOLD}${_key})${C_RESET} ${_label}"
+                printf "  ${C_YELLOW}${C_BOLD}%s)${C_RESET} %s\n" "${_tk[$i]}" "${_tl[$i]}"
             fi
         done
-
         if [[ -t 0 ]]; then
-            echo ""
-            echo "  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}"
+            printf "\033[2K\n"
+            printf "\033[2K  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}\n"
         fi
-        echo ""
+        printf "\033[2K\n"
+    }
+
+    while true; do
+        if [[ "$full_redraw" -eq 1 ]]; then
+            if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
+            echo ""
+            echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+            echo "${C_CYAN}${C_BOLD}         SSH Tunnels${C_RESET}"
+            echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+            _list_tunnels
+            echo ""
+            full_redraw=0
+        else
+            printf "\033[%dA" $(( _tc + 3 ))
+        fi
+        _draw_tunnel_items
 
         local choice
         if [[ -t 0 ]]; then
@@ -747,6 +748,7 @@ cmd_tunnels() {
             enter) choice="${_tk[$tunnel_cursor]}" ;;
         esac
 
+        full_redraw=1
         case "${choice,,}" in
             a) cmd_tunnel_add ;;
             s) cmd_tunnel_start ;;
@@ -920,39 +922,13 @@ cmd_update() {
 # ---------------------------------------------------------------------------
 
 main_menu() {
-    local menu_cursor=0
+    local menu_cursor=0 full_redraw=1
     local install_status github_version
     install_status=$(_check_install_status)
     github_version=$(_get_github_version_cached)
 
-    while true; do
-        if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
-        echo ""
-        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
-        echo "${C_CYAN}${C_BOLD}     SSH Menu  v${VERSION}${C_RESET}"
-        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
-
-        case "$install_status" in
-            installed_current)
-                echo "  ${C_GREEN}● Installed in system path (up to date)${C_RESET}"
-                ;;
-            installed_outdated)
-                echo "  ${C_YELLOW}● Installed in system path (update available: v${VERSION})${C_RESET}"
-                ;;
-            not_installed)
-                echo "  ${C_RED}● Not installed in system path${C_RESET}"
-                ;;
-        esac
-
-        if [[ -n "$github_version" ]] && _version_lt "$VERSION" "$github_version"; then
-            echo "  ${C_YELLOW}${C_BOLD}↑ GitHub update available: v${github_version}${C_RESET}"
-        fi
-
-        _list_servers
-        echo ""
-
-        # Build the active set of menu items
-        local -a _menu_keys=() _menu_labels=()
+    _build_main_menu() {
+        _menu_keys=(); _menu_labels=()
         _menu_keys+=('a'); _menu_labels+=("Add server")
         _menu_keys+=('c'); _menu_labels+=("Connect to server")
         _menu_keys+=('e'); _menu_labels+=("Edit server")
@@ -965,26 +941,58 @@ main_menu() {
             _menu_keys+=('i'); _menu_labels+=("Install/update to system path")
         fi
         _menu_keys+=('q'); _menu_labels+=("Quit")
+    }
 
-        local _menu_count=${#_menu_keys[@]}
-        # Keep cursor in bounds if the menu shrank (e.g. install option removed)
-        [[ $menu_cursor -ge $_menu_count ]] && menu_cursor=$((_menu_count - 1))
-
+    _draw_main_menu_items() {
         local i
         for ((i=0; i<_menu_count; i++)); do
-            local _key="${_menu_keys[$i]}" _label="${_menu_labels[$i]}"
+            printf "\033[2K"
             if [[ -t 0 && $i -eq $menu_cursor ]]; then
-                echo "  ${C_GREEN}${C_BOLD}▶ ${_key}) ${_label}${C_RESET}"
+                printf "  ${C_GREEN}${C_BOLD}▶ %s) %s${C_RESET}\n" "${_menu_keys[$i]}" "${_menu_labels[$i]}"
             else
-                echo "  ${C_YELLOW}${C_BOLD}${_key})${C_RESET} ${_label}"
+                printf "  ${C_YELLOW}${C_BOLD}%s)${C_RESET} %s\n" "${_menu_keys[$i]}" "${_menu_labels[$i]}"
             fi
         done
-
         if [[ -t 0 ]]; then
-            echo ""
-            echo "  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}"
+            printf "\033[2K\n"
+            printf "\033[2K  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}\n"
         fi
-        echo ""
+        printf "\033[2K\n"
+    }
+
+    local -a _menu_keys=() _menu_labels=()
+    local _menu_count=0
+
+    while true; do
+        _build_main_menu
+        _menu_count=${#_menu_keys[@]}
+        [[ $menu_cursor -ge $_menu_count ]] && menu_cursor=$((_menu_count - 1))
+
+        if [[ "$full_redraw" -eq 1 ]]; then
+            if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
+            echo ""
+            echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+            echo "${C_CYAN}${C_BOLD}     SSH Menu  v${VERSION}${C_RESET}"
+            echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+            case "$install_status" in
+                installed_current)
+                    echo "  ${C_GREEN}● Installed in system path (up to date)${C_RESET}" ;;
+                installed_outdated)
+                    echo "  ${C_YELLOW}● Installed in system path (update available: v${VERSION})${C_RESET}" ;;
+                not_installed)
+                    echo "  ${C_RED}● Not installed in system path${C_RESET}" ;;
+            esac
+            if [[ -n "$github_version" ]] && _version_lt "$VERSION" "$github_version"; then
+                echo "  ${C_YELLOW}${C_BOLD}↑ GitHub update available: v${github_version}${C_RESET}"
+            fi
+            _list_servers
+            echo ""
+            full_redraw=0
+        else
+            # Navigation only: move cursor up over menu items + footer and redraw
+            printf "\033[%dA" $(( _menu_count + 3 ))
+        fi
+        _draw_main_menu_items
 
         local choice
         if [[ -t 0 ]]; then
@@ -994,19 +1002,12 @@ main_menu() {
         fi
 
         case "$choice" in
-            up)
-                menu_cursor=$(( (menu_cursor - 1 + _menu_count) % _menu_count ))
-                continue
-                ;;
-            down)
-                menu_cursor=$(( (menu_cursor + 1) % _menu_count ))
-                continue
-                ;;
-            enter)
-                choice="${_menu_keys[$menu_cursor]}"
-                ;;
+            up)    menu_cursor=$(( (menu_cursor - 1 + _menu_count) % _menu_count )); continue ;;
+            down)  menu_cursor=$(( (menu_cursor + 1) % _menu_count )); continue ;;
+            enter) choice="${_menu_keys[$menu_cursor]}" ;;
         esac
 
+        full_redraw=1
         case "${choice,,}" in
             a) cmd_add ;;
             c) cmd_connect ;;
@@ -1019,7 +1020,7 @@ main_menu() {
                     cmd_install
                     install_status=$(_check_install_status)
                 else
-                    echo "  ${C_RED}Unknown option. Please choose a, c, e, d, or q.${C_RESET}"
+                    echo "  ${C_RED}Unknown option.${C_RESET}"
                 fi
                 ;;
             q) echo "Goodbye."; exit 0 ;;
@@ -1042,7 +1043,7 @@ main_menu() {
                     echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
                 fi
                 ;;
-            *) echo "  ${C_RED}Unknown option. Please choose a, c, e, d$([ "$install_status" != "installed_current" ] && echo ", i"), or q.${C_RESET}" ;;
+            *) echo "  ${C_RED}Unknown option.${C_RESET}" ;;
         esac
     done
 }
