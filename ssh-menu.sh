@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
@@ -837,6 +837,8 @@ cmd_install() {
 
 main_menu() {
     local menu_cursor=0
+    local install_status
+    install_status=$(_check_install_status)
 
     while true; do
         if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
@@ -845,8 +847,6 @@ main_menu() {
         echo "${C_CYAN}${C_BOLD}     SSH Menu  v${VERSION}${C_RESET}"
         echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
 
-        local install_status
-        install_status=$(_check_install_status)
         case "$install_status" in
             installed_current)
                 echo "  ${C_GREEN}● Installed in system path (up to date)${C_RESET}"
@@ -924,6 +924,7 @@ main_menu() {
             i)
                 if [[ "$install_status" != "installed_current" ]]; then
                     cmd_install
+                    install_status=$(_check_install_status)
                 else
                     echo "  ${C_RED}Unknown option. Please choose a, c, e, d, or q.${C_RESET}"
                 fi
