@@ -238,10 +238,10 @@ done < <(echo "$PATH" | tr ':' '\n')
 
 FAKE_EMPTY_PATH=$(mktemp -d)   # directory with no ssh-menu binary
 
-# No ssh-menu in path → should show "Not installed"
+# No ssh-menu in path → install status line should not appear
 _reset_config
 output=$(PATH="$FAKE_EMPTY_PATH:$SYSTEM_PATH" "$BASH_CMD" "$SCRIPT" <<< 'q')
-_assert_contains "main menu shows not installed status" "Not installed in system path" "$output"
+_assert_not_contains "main menu hides status when not installed" "Installed in system path" "$output"
 _assert_contains "main menu shows version in header" "SSH Menu  v" "$output"
 _assert_contains "main menu shows install option when not installed" "i)" "$output"
 
@@ -261,7 +261,7 @@ sed 's/^VERSION="[^"]*"/VERSION="0.0.1"/' "$SCRIPT" > "$FAKE_BIN3/ssh-menu"
 chmod +x "$FAKE_BIN3/ssh-menu"
 
 output=$(PATH="$FAKE_BIN3:$FAKE_EMPTY_PATH:$SYSTEM_PATH" "$BASH_CMD" "$SCRIPT" <<< 'q')
-_assert_contains "main menu shows outdated install status" "Installed in system path (update available" "$output"
+_assert_contains "main menu shows outdated install status" "Installed in system path (outdated)" "$output"
 _assert_contains "main menu shows install option when outdated" "i)" "$output"
 
 rm -rf "$FAKE_EMPTY_PATH" "$FAKE_BIN2" "$FAKE_BIN3"

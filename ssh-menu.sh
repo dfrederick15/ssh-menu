@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
@@ -192,12 +192,13 @@ _check_install_status() {
 
 _fetch_github_version() {
     # Returns the VERSION string from the GitHub repo, or empty on failure.
+    # || true prevents pipefail from propagating when curl/wget fails.
     if command -v curl &>/dev/null; then
         curl -fsSL --max-time 4 "$GITHUB_RAW_URL" 2>/dev/null \
-            | grep -m1 '^VERSION=' | cut -d'"' -f2
+            | grep -m1 '^VERSION=' | cut -d'"' -f2 || true
     elif command -v wget &>/dev/null; then
         wget -qO- --timeout=4 "$GITHUB_RAW_URL" 2>/dev/null \
-            | grep -m1 '^VERSION=' | cut -d'"' -f2
+            | grep -m1 '^VERSION=' | cut -d'"' -f2 || true
     fi
 }
 
@@ -958,6 +959,15 @@ main_menu() {
             printf "\033[2K  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}\n"
         fi
         printf "\033[2K\n"
+        # Install status at the bottom — only shown when installed
+        case "$install_status" in
+            installed_current)
+                printf "\033[2K  ${C_GREEN}● Installed in system path (up to date)${C_RESET}\n" ;;
+            installed_outdated)
+                printf "\033[2K  ${C_YELLOW}● Installed in system path (outdated)${C_RESET}\n" ;;
+            *)
+                printf "\033[2K\n" ;;
+        esac
     }
 
     local -a _menu_keys=() _menu_labels=()
@@ -974,14 +984,6 @@ main_menu() {
             echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
             echo "${C_CYAN}${C_BOLD}     SSH Menu  v${VERSION}${C_RESET}"
             echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
-            case "$install_status" in
-                installed_current)
-                    echo "  ${C_GREEN}● Installed in system path (up to date)${C_RESET}" ;;
-                installed_outdated)
-                    echo "  ${C_YELLOW}● Installed in system path (update available: v${VERSION})${C_RESET}" ;;
-                not_installed)
-                    echo "  ${C_RED}● Not installed in system path${C_RESET}" ;;
-            esac
             if [[ -n "$github_version" ]] && _version_lt "$VERSION" "$github_version"; then
                 echo "  ${C_YELLOW}${C_BOLD}↑ GitHub update available: v${github_version}${C_RESET}"
             fi
@@ -990,7 +992,7 @@ main_menu() {
             full_redraw=0
         else
             # Navigation only: move cursor up over menu items + footer and redraw
-            printf "\033[%dA" $(( _menu_count + 3 ))
+            printf "\033[%dA" $(( _menu_count + 4 ))
         fi
         _draw_main_menu_items
 
