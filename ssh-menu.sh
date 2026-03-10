@@ -12,6 +12,8 @@ VERSION="1.0.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
+TUNNELS_FILE="$CONFIG_DIR/tunnels"
+PIDS_DIR="$CONFIG_DIR/pids"
 
 INSTALL_DIR="${SSH_MENU_INSTALL_DIR:-/usr/local/bin}"
 INSTALL_TARGET="$INSTALL_DIR/ssh-menu"
@@ -78,8 +80,8 @@ _read_key() {
 }
 
 _ensure_config() {
-    mkdir -p "$CONFIG_DIR"
-    touch "$CONFIG_FILE"
+    mkdir -p "$CONFIG_DIR" "$PIDS_DIR"
+    touch "$CONFIG_FILE" "$TUNNELS_FILE"
 }
 
 _server_count() {
@@ -299,6 +301,428 @@ _connect_ssh() {
 }
 
 # ---------------------------------------------------------------------------
+# Tunnel helpers
+# ---------------------------------------------------------------------------
+
+# Tunnel config format (one entry per line):
+# name:type:local_port:remote_host:remote_port:user:host:port
+# type: L=local forward, R=remote forward, D=dynamic/SOCKS
+# remote_host and remote_port are empty for D tunnels.
+
+_tunnel_count() {
+    wc -l < "$TUNNELS_FILE" 2>/dev/null || echo 0
+}
+
+_get_tunnel_by_index() {
+    sed -n "${1}p" "$TUNNELS_FILE"
+}
+
+_tunnel_pid_file() {
+    echo "$PIDS_DIR/tunnel-${1}.pid"
+}
+
+_is_tunnel_running() {
+    local pid_file
+    pid_file=$(_tunnel_pid_file "$1")
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            return 0
+        else
+            rm -f "$pid_file"
+        fi
+    fi
+    return 1
+}
+
+_tunnel_desc() {
+    # _tunnel_desc type local_port remote_host remote_port
+    case "$1" in
+        L) printf '%s→%s:%s' "$2" "$3" "$4" ;;
+        R) printf '%s←%s:%s' "$4" "$3" "$2" ;;
+        D) printf 'SOCKS:%s' "$2" ;;
+    esac
+}
+
+_list_tunnels() {
+    local count
+    count=$(_tunnel_count)
+    if [[ "$count" -eq 0 ]]; then
+        echo "  ${C_YELLOW}(no tunnels saved)${C_RESET}"
+        return
+    fi
+
+    local i=1
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local name type lport rhost rport user host port
+        name=$(_get_field "$line" 1);  type=$(_get_field "$line" 2)
+        lport=$(_get_field "$line" 3); rhost=$(_get_field "$line" 4)
+        rport=$(_get_field "$line" 5); user=$(_get_field "$line" 6)
+        host=$(_get_field "$line" 7);  port=$(_get_field "$line" 8)
+        local dot desc
+        _is_tunnel_running "$name" && dot="${C_GREEN}●${C_RESET}" || dot="${C_RED}○${C_RESET}"
+        desc=$(_tunnel_desc "$type" "$lport" "$rhost" "$rport")
+        printf "  ${C_YELLOW}${C_BOLD}%2d)${C_RESET} %b ${C_BOLD}%-20s${C_RESET} ${C_CYAN}%-28s${C_RESET} via %s@%s:%s\n" \
+            "$i" "$dot" "$name" "$desc" "$user" "$host" "$port"
+        ((i++))
+    done < "$TUNNELS_FILE"
+}
+
+_validate_tunnel_type() {
+    [[ "$1" =~ ^[LRD]$ ]]
+}
+
+_prompt_tunnel_fields() {
+    # Sets globals: _t_name _t_type _t_lport _t_rhost _t_rport _t_user _t_host _t_port
+    local dn="${1:-}" dt="${2:-L}" dlp="${3:-}" drh="${4:-}" drp="${5:-}" \
+          du="${6:-}" dh="${7:-}" dpo="${8:-22}"
+
+    while true; do
+        read -rp "  Name [${dn}]: " _t_name
+        _t_name="${_t_name:-$dn}"
+        [[ -n "$_t_name" ]] && break
+        echo "  ${C_RED}Name cannot be empty.${C_RESET}"
+    done
+
+    echo "  Type: L=local forward  R=remote forward  D=dynamic (SOCKS)"
+    while true; do
+        read -rp "  Type [${dt}]: " _t_type
+        _t_type="${_t_type:-$dt}"
+        _t_type="${_t_type^^}"
+        _validate_tunnel_type "$_t_type" && break
+        echo "  ${C_RED}Type must be L, R, or D.${C_RESET}"
+    done
+
+    while true; do
+        read -rp "  Local port [${dlp}]: " _t_lport
+        _t_lport="${_t_lport:-$dlp}"
+        _validate_port "$_t_lport" && break
+        echo "  ${C_RED}Port must be a number between 1 and 65535.${C_RESET}"
+    done
+
+    if [[ "$_t_type" != "D" ]]; then
+        while true; do
+            read -rp "  Remote host [${drh}]: " _t_rhost
+            _t_rhost="${_t_rhost:-$drh}"
+            [[ -n "$_t_rhost" ]] && break
+            echo "  ${C_RED}Remote host cannot be empty.${C_RESET}"
+        done
+        while true; do
+            read -rp "  Remote port [${drp}]: " _t_rport
+            _t_rport="${_t_rport:-$drp}"
+            _validate_port "$_t_rport" && break
+            echo "  ${C_RED}Port must be a number between 1 and 65535.${C_RESET}"
+        done
+    else
+        _t_rhost=""
+        _t_rport=""
+    fi
+
+    echo "  --- SSH server to tunnel through ---"
+    while true; do
+        read -rp "  User [${du}]: " _t_user
+        _t_user="${_t_user:-$du}"
+        [[ -n "$_t_user" ]] && break
+        echo "  ${C_RED}User cannot be empty.${C_RESET}"
+    done
+    while true; do
+        read -rp "  Host [${dh}]: " _t_host
+        _t_host="${_t_host:-$dh}"
+        [[ -n "$_t_host" ]] && break
+        echo "  ${C_RED}Host cannot be empty.${C_RESET}"
+    done
+    while true; do
+        read -rp "  SSH port [${dpo}]: " _t_port
+        _t_port="${_t_port:-$dpo}"
+        _validate_port "$_t_port" && break
+        echo "  ${C_RED}Port must be a number between 1 and 65535.${C_RESET}"
+    done
+}
+
+_select_tunnel() {
+    local prompt="${1:-Select a tunnel}"
+    local total
+    total=$(_tunnel_count)
+    if [[ "$total" -eq 0 ]]; then
+        echo "  ${C_YELLOW}No tunnels saved yet.${C_RESET}"
+        return 1
+    fi
+    if [[ -t 0 ]]; then
+        _select_tunnel_interactive "$prompt"
+        return $?
+    fi
+    _list_tunnels
+    while true; do
+        read -rp "  $prompt (1-${total}): " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$total" ]]; then
+            _selected_tunnel_line=$(_get_tunnel_by_index "$choice")
+            _selected_tunnel_index="$choice"
+            return 0
+        fi
+        echo "  ${C_RED}Invalid selection. Enter a number between 1 and ${total}.${C_RESET}"
+    done
+}
+
+_select_tunnel_interactive() {
+    local prompt="${1:-Select a tunnel}"
+    local -a lines=()
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        lines+=("$line")
+    done < "$TUNNELS_FILE"
+    local total=${#lines[@]}
+    local current=0
+
+    _draw_tunnel_list() {
+        local i
+        for ((i=0; i<total; i++)); do
+            printf "\033[2K"
+            local entry="${lines[$i]}"
+            local name type lport rhost rport user host port dot desc
+            name=$(_get_field "$entry" 1);  type=$(_get_field "$entry" 2)
+            lport=$(_get_field "$entry" 3); rhost=$(_get_field "$entry" 4)
+            rport=$(_get_field "$entry" 5); user=$(_get_field "$entry" 6)
+            host=$(_get_field "$entry" 7);  port=$(_get_field "$entry" 8)
+            _is_tunnel_running "$name" && dot="${C_GREEN}●${C_RESET}" || dot="${C_RED}○${C_RESET}"
+            desc=$(_tunnel_desc "$type" "$lport" "$rhost" "$rport")
+            if [[ $i -eq $current ]]; then
+                printf "  ${C_GREEN}${C_BOLD}▶ %-20s${C_RESET}  %b  ${C_CYAN}%-28s${C_RESET}  via %s@%s:%s\n" \
+                    "$name" "$dot" "$desc" "$user" "$host" "$port"
+            else
+                printf "    ${C_BOLD}%-20s${C_RESET}  %b  ${C_CYAN}%-28s${C_RESET}  via %s@%s:%s\n" \
+                    "$name" "$dot" "$desc" "$user" "$host" "$port"
+            fi
+        done
+        printf "\033[2K  ${C_YELLOW}↑/↓ navigate · Enter select · q cancel${C_RESET}\n"
+    }
+
+    tput civis 2>/dev/null || true
+    _draw_tunnel_list
+
+    while true; do
+        local key; key=$(_read_key)
+        printf "\033[%dA" $((total + 1))
+        case "$key" in
+            up)    current=$(( (current - 1 + total) % total )) ;;
+            down)  current=$(( (current + 1) % total )) ;;
+            enter)
+                tput cnorm 2>/dev/null || true
+                printf "\033[%dB\n" $((total + 1))
+                _selected_tunnel_line="${lines[$current]}"
+                _selected_tunnel_index=$(( current + 1 ))
+                return 0
+                ;;
+            q|Q)
+                tput cnorm 2>/dev/null || true
+                printf "\033[%dB\n" $((total + 1))
+                return 1
+                ;;
+        esac
+        _draw_tunnel_list
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Tunnel actions
+# ---------------------------------------------------------------------------
+
+cmd_tunnel_add() {
+    echo ""
+    echo "${C_BOLD}--- Add Tunnel ---${C_RESET}"
+    local _t_name _t_type _t_lport _t_rhost _t_rport _t_user _t_host _t_port
+    _prompt_tunnel_fields
+    echo "${_t_name}:${_t_type}:${_t_lport}:${_t_rhost}:${_t_rport}:${_t_user}:${_t_host}:${_t_port}" >> "$TUNNELS_FILE"
+    echo "  ${C_GREEN}Saved tunnel '${_t_name}'.${C_RESET}"
+}
+
+cmd_tunnel_start() {
+    echo ""
+    echo "${C_BOLD}--- Start Tunnel ---${C_RESET}"
+    local _selected_tunnel_line _selected_tunnel_index
+    _select_tunnel "Start tunnel" || return 0
+
+    local name type lport rhost rport user host port
+    name=$(_get_field "$_selected_tunnel_line" 1);  type=$(_get_field "$_selected_tunnel_line" 2)
+    lport=$(_get_field "$_selected_tunnel_line" 3); rhost=$(_get_field "$_selected_tunnel_line" 4)
+    rport=$(_get_field "$_selected_tunnel_line" 5); user=$(_get_field "$_selected_tunnel_line" 6)
+    host=$(_get_field "$_selected_tunnel_line" 7);  port=$(_get_field "$_selected_tunnel_line" 8)
+
+    if _is_tunnel_running "$name"; then
+        echo "  ${C_YELLOW}Tunnel '${name}' is already running.${C_RESET}"
+        return 0
+    fi
+
+    local pid_file
+    pid_file=$(_tunnel_pid_file "$name")
+
+    local -a ssh_args=(-N -p "$port")
+    case "$type" in
+        L) ssh_args+=(-L "${lport}:${rhost}:${rport}") ;;
+        R) ssh_args+=(-R "${rport}:${rhost}:${lport}") ;;
+        D) ssh_args+=(-D "$lport") ;;
+    esac
+    ssh_args+=("${user}@${host}")
+
+    local desc
+    desc=$(_tunnel_desc "$type" "$lport" "$rhost" "$rport")
+    echo "  Starting tunnel '${C_BOLD}${name}${C_RESET}' (${C_CYAN}${desc}${C_RESET}) in background..."
+    ssh "${ssh_args[@]}" &
+    local pid=$!
+    disown "$pid"
+    echo "$pid" > "$pid_file"
+    echo "  ${C_GREEN}Tunnel started (PID: ${pid}).${C_RESET}"
+}
+
+cmd_tunnel_stop() {
+    echo ""
+    echo "${C_BOLD}--- Stop Tunnel ---${C_RESET}"
+    local _selected_tunnel_line _selected_tunnel_index
+    _select_tunnel "Stop tunnel" || return 0
+
+    local name
+    name=$(_get_field "$_selected_tunnel_line" 1)
+    local pid_file
+    pid_file=$(_tunnel_pid_file "$name")
+
+    if [[ ! -f "$pid_file" ]]; then
+        echo "  ${C_YELLOW}Tunnel '${name}' does not appear to be running.${C_RESET}"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$pid_file")
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid"
+        rm -f "$pid_file"
+        echo "  ${C_GREEN}Tunnel '${name}' stopped.${C_RESET}"
+    else
+        rm -f "$pid_file"
+        echo "  ${C_YELLOW}Tunnel '${name}' was not running (stale PID removed).${C_RESET}"
+    fi
+}
+
+cmd_tunnel_edit() {
+    echo ""
+    echo "${C_BOLD}--- Edit Tunnel ---${C_RESET}"
+    local _selected_tunnel_line _selected_tunnel_index
+    _select_tunnel "Edit tunnel" || return 0
+
+    local name type lport rhost rport user host port
+    name=$(_get_field "$_selected_tunnel_line" 1);  type=$(_get_field "$_selected_tunnel_line" 2)
+    lport=$(_get_field "$_selected_tunnel_line" 3); rhost=$(_get_field "$_selected_tunnel_line" 4)
+    rport=$(_get_field "$_selected_tunnel_line" 5); user=$(_get_field "$_selected_tunnel_line" 6)
+    host=$(_get_field "$_selected_tunnel_line" 7);  port=$(_get_field "$_selected_tunnel_line" 8)
+
+    if _is_tunnel_running "$name"; then
+        echo "  ${C_YELLOW}Stop tunnel '${name}' before editing.${C_RESET}"
+        return 0
+    fi
+
+    echo "  Editing '${C_BOLD}${name}${C_RESET}' (press Enter to keep current value):"
+    local _t_name _t_type _t_lport _t_rhost _t_rport _t_user _t_host _t_port
+    _prompt_tunnel_fields "$name" "$type" "$lport" "$rhost" "$rport" "$user" "$host" "$port"
+    local tmp_file
+    tmp_file=$(mktemp)
+    awk -v idx="$_selected_tunnel_index" \
+        -v new="${_t_name}:${_t_type}:${_t_lport}:${_t_rhost}:${_t_rport}:${_t_user}:${_t_host}:${_t_port}" \
+        'NR==idx {print new; next} {print}' "$TUNNELS_FILE" > "$tmp_file"
+    mv "$tmp_file" "$TUNNELS_FILE"
+    echo "  ${C_GREEN}Updated tunnel '${_t_name}'.${C_RESET}"
+}
+
+cmd_tunnel_delete() {
+    echo ""
+    echo "${C_BOLD}--- Delete Tunnel ---${C_RESET}"
+    local _selected_tunnel_line _selected_tunnel_index
+    _select_tunnel "Delete tunnel" || return 0
+
+    local name
+    name=$(_get_field "$_selected_tunnel_line" 1)
+
+    if _is_tunnel_running "$name"; then
+        echo "  ${C_YELLOW}Stop tunnel '${name}' before deleting.${C_RESET}"
+        return 0
+    fi
+
+    read -rp "  Delete tunnel '${C_BOLD}${name}${C_RESET}'? [y/N]: " confirm
+    if [[ "${confirm,,}" == "y" ]]; then
+        local tmp_file
+        tmp_file=$(mktemp)
+        awk -v idx="$_selected_tunnel_index" 'NR!=idx' "$TUNNELS_FILE" > "$tmp_file"
+        mv "$tmp_file" "$TUNNELS_FILE"
+        echo "  ${C_GREEN}Deleted tunnel '${name}'.${C_RESET}"
+    else
+        echo "  ${C_YELLOW}Cancelled.${C_RESET}"
+    fi
+}
+
+cmd_tunnels() {
+    local tunnel_cursor=0
+    while true; do
+        if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
+        echo ""
+        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+        echo "${C_CYAN}${C_BOLD}         SSH Tunnels${C_RESET}"
+        echo "${C_CYAN}${C_BOLD}==============================${C_RESET}"
+
+        _list_tunnels
+        echo ""
+
+        local -a _tk=() _tl=()
+        _tk+=('a'); _tl+=("Add tunnel")
+        _tk+=('s'); _tl+=("Start tunnel")
+        _tk+=('x'); _tl+=("Stop tunnel")
+        _tk+=('e'); _tl+=("Edit tunnel")
+        _tk+=('d'); _tl+=("Delete tunnel")
+        _tk+=('b'); _tl+=("Back to main menu")
+
+        local _tc=${#_tk[@]}
+        [[ $tunnel_cursor -ge $_tc ]] && tunnel_cursor=$((_tc - 1))
+
+        local i
+        for ((i=0; i<_tc; i++)); do
+            local _key="${_tk[$i]}" _label="${_tl[$i]}"
+            if [[ -t 0 && $i -eq $tunnel_cursor ]]; then
+                echo "  ${C_GREEN}${C_BOLD}▶ ${_key}) ${_label}${C_RESET}"
+            else
+                echo "  ${C_YELLOW}${C_BOLD}${_key})${C_RESET} ${_label}"
+            fi
+        done
+
+        if [[ -t 0 ]]; then
+            echo ""
+            echo "  ${C_YELLOW}↑/↓ navigate · Enter select · or press a letter${C_RESET}"
+        fi
+        echo ""
+
+        local choice
+        if [[ -t 0 ]]; then
+            choice=$(_read_key)
+        else
+            read -rp "  Choice: " choice
+        fi
+
+        case "$choice" in
+            up)    tunnel_cursor=$(( (tunnel_cursor - 1 + _tc) % _tc )); continue ;;
+            down)  tunnel_cursor=$(( (tunnel_cursor + 1) % _tc )); continue ;;
+            enter) choice="${_tk[$tunnel_cursor]}" ;;
+        esac
+
+        case "${choice,,}" in
+            a) cmd_tunnel_add ;;
+            s) cmd_tunnel_start ;;
+            x) cmd_tunnel_stop ;;
+            e) cmd_tunnel_edit ;;
+            d) cmd_tunnel_delete ;;
+            b) return 0 ;;
+            *) echo "  ${C_RED}Unknown option.${C_RESET}" ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 
@@ -444,6 +868,7 @@ main_menu() {
         _menu_keys+=('c'); _menu_labels+=("Connect to server")
         _menu_keys+=('e'); _menu_labels+=("Edit server")
         _menu_keys+=('d'); _menu_labels+=("Delete server")
+        _menu_keys+=('t'); _menu_labels+=("Tunnels")
         if [[ "$install_status" != "installed_current" ]]; then
             _menu_keys+=('i'); _menu_labels+=("Install/update to system path")
         fi
@@ -495,6 +920,7 @@ main_menu() {
             c) cmd_connect ;;
             e) cmd_edit ;;
             d) cmd_delete ;;
+            t) cmd_tunnels ;;
             i)
                 if [[ "$install_status" != "installed_current" ]]; then
                     cmd_install
@@ -535,12 +961,17 @@ _ensure_config
 
 # Allow non-interactive invocation for scripting/testing
 case "${1:-}" in
-    add)     shift; cmd_add "$@" ;;
-    connect) shift; cmd_connect "$@" ;;
-    edit)    shift; cmd_edit "$@" ;;
-    delete)  shift; cmd_delete "$@" ;;
-    install) shift; cmd_install "$@" ;;
-    list)    _list_servers ;;
-    version) echo "ssh-menu v${VERSION}" ;;
-    *)       main_menu ;;
+    add)            shift; cmd_add "$@" ;;
+    connect)        shift; cmd_connect "$@" ;;
+    edit)           shift; cmd_edit "$@" ;;
+    delete)         shift; cmd_delete "$@" ;;
+    install)        shift; cmd_install "$@" ;;
+    list)           _list_servers ;;
+    tunnels)        shift; cmd_tunnels "$@" ;;
+    tunnel-add)     shift; cmd_tunnel_add "$@" ;;
+    tunnel-start)   shift; cmd_tunnel_start "$@" ;;
+    tunnel-stop)    shift; cmd_tunnel_stop "$@" ;;
+    tunnel-delete)  shift; cmd_tunnel_delete "$@" ;;
+    version)        echo "ssh-menu v${VERSION}" ;;
+    *)              main_menu ;;
 esac
