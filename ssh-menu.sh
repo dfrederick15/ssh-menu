@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
@@ -17,6 +17,8 @@ PIDS_DIR="$CONFIG_DIR/pids"
 
 INSTALL_DIR="${SSH_MENU_INSTALL_DIR:-/usr/local/bin}"
 INSTALL_TARGET="$INSTALL_DIR/ssh-menu"
+
+GITHUB_RAW_URL="https://raw.githubusercontent.com/dfrederick15/ssh-menu/main/ssh-menu.sh"
 
 # ---------------------------------------------------------------------------
 # Colors (only when stdout is a terminal that supports color)
@@ -186,6 +188,41 @@ _check_install_status() {
     else
         echo "installed_outdated"
     fi
+}
+
+_fetch_github_version() {
+    # Returns the VERSION string from the GitHub repo, or empty on failure.
+    if command -v curl &>/dev/null; then
+        curl -fsSL --max-time 4 "$GITHUB_RAW_URL" 2>/dev/null \
+            | grep -m1 '^VERSION=' | cut -d'"' -f2
+    elif command -v wget &>/dev/null; then
+        wget -qO- --timeout=4 "$GITHUB_RAW_URL" 2>/dev/null \
+            | grep -m1 '^VERSION=' | cut -d'"' -f2
+    fi
+}
+
+_get_github_version_cached() {
+    # Caches the GitHub version for 24 hours so startup isn't slow every run.
+    local cache_file="$CONFIG_DIR/github-version-cache"
+    if [[ -f "$cache_file" ]] && \
+       find "$cache_file" -mmin -$((60*24)) -print 2>/dev/null | grep -q .; then
+        cat "$cache_file"
+        return
+    fi
+    local version
+    version=$(_fetch_github_version)
+    if [[ -n "$version" ]]; then
+        echo "$version" > "$cache_file"
+        echo "$version"
+    elif [[ -f "$cache_file" ]]; then
+        cat "$cache_file"  # serve stale on network failure
+    fi
+}
+
+_version_lt() {
+    # Returns 0 (true) if $1 is strictly less than $2 by semver ordering.
+    [[ "$1" == "$2" ]] && return 1
+    [[ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -1)" == "$1" ]]
 }
 
 _select_server() {
@@ -831,14 +868,62 @@ cmd_install() {
     echo "  ${C_GREEN}Done! You can now run 'ssh-menu' from anywhere.${C_RESET}"
 }
 
+cmd_update() {
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+    echo ""
+    echo "${C_BOLD}--- Download Update from GitHub ---${C_RESET}"
+
+    if [[ ! -w "$script_path" ]]; then
+        echo "  ${C_RED}No write permission to '${script_path}'. Try running with sudo.${C_RESET}"
+        return 1
+    fi
+
+    echo "  Downloading latest version..."
+    local tmp_file ok=0
+    tmp_file=$(mktemp)
+    if command -v curl &>/dev/null; then
+        curl -fsSL --max-time 30 "$GITHUB_RAW_URL" -o "$tmp_file" 2>/dev/null && ok=1
+    elif command -v wget &>/dev/null; then
+        wget -qO "$tmp_file" --timeout=30 "$GITHUB_RAW_URL" 2>/dev/null && ok=1
+    else
+        echo "  ${C_RED}Neither curl nor wget found.${C_RESET}"
+        rm -f "$tmp_file"; return 1
+    fi
+
+    if [[ "$ok" -eq 0 ]]; then
+        rm -f "$tmp_file"
+        echo "  ${C_RED}Download failed.${C_RESET}"
+        return 1
+    fi
+
+    if ! grep -q '^#!/' "$tmp_file" 2>/dev/null; then
+        rm -f "$tmp_file"
+        echo "  ${C_RED}Downloaded file does not look valid.${C_RESET}"
+        return 1
+    fi
+
+    cp "$tmp_file" "$script_path"
+    chmod +x "$script_path"
+    rm -f "$tmp_file"
+    rm -f "$CONFIG_DIR/github-version-cache"
+
+    local new_version
+    new_version=$(grep -m1 '^VERSION=' "$script_path" | cut -d'"' -f2)
+    echo "  ${C_GREEN}Updated to v${new_version}. Restarting...${C_RESET}"
+    exec "$script_path"
+}
+
 # ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
 
 main_menu() {
     local menu_cursor=0
-    local install_status
+    local install_status github_version
     install_status=$(_check_install_status)
+    github_version=$(_get_github_version_cached)
 
     while true; do
         if [[ -t 1 ]]; then tput clear 2>/dev/null || true; fi
@@ -859,6 +944,10 @@ main_menu() {
                 ;;
         esac
 
+        if [[ -n "$github_version" ]] && _version_lt "$VERSION" "$github_version"; then
+            echo "  ${C_YELLOW}${C_BOLD}↑ GitHub update available: v${github_version}${C_RESET}"
+        fi
+
         _list_servers
         echo ""
 
@@ -869,6 +958,9 @@ main_menu() {
         _menu_keys+=('e'); _menu_labels+=("Edit server")
         _menu_keys+=('d'); _menu_labels+=("Delete server")
         _menu_keys+=('t'); _menu_labels+=("Tunnels")
+        if [[ -n "$github_version" ]] && _version_lt "$VERSION" "$github_version"; then
+            _menu_keys+=('u'); _menu_labels+=("Download update (v${github_version})")
+        fi
         if [[ "$install_status" != "installed_current" ]]; then
             _menu_keys+=('i'); _menu_labels+=("Install/update to system path")
         fi
@@ -921,6 +1013,7 @@ main_menu() {
             e) cmd_edit ;;
             d) cmd_delete ;;
             t) cmd_tunnels ;;
+            u) cmd_update ;;
             i)
                 if [[ "$install_status" != "installed_current" ]]; then
                     cmd_install
@@ -969,6 +1062,7 @@ case "${1:-}" in
     install)        shift; cmd_install "$@" ;;
     list)           _list_servers ;;
     tunnels)        shift; cmd_tunnels "$@" ;;
+    update)         shift; cmd_update "$@" ;;
     tunnel-add)     shift; cmd_tunnel_add "$@" ;;
     tunnel-start)   shift; cmd_tunnel_start "$@" ;;
     tunnel-stop)    shift; cmd_tunnel_stop "$@" ;;
