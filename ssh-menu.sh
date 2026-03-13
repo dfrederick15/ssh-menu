@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 
 CONFIG_DIR="${SSH_MENU_CONFIG_DIR:-$HOME/.config/ssh-menu}"
 CONFIG_FILE="$CONFIG_DIR/servers"
@@ -333,7 +333,10 @@ _connect_ssh() {
     _rc+='m=$(free -m 2>/dev/null|awk "/^Mem:/{printf \"%d/%dMB\",\$3,\$2}");'
     _rc+='printf "\033]0;%s%s%s\007" "$h" "${l:+ | load: $l}" "${m:+ | mem: $m}";'
     _rc+='exec "${SHELL:-bash}" -l'
-    ssh -p "$port" -t "${user}@${host}" "$_rc"
+    ssh -p "$port" -t \
+        -o ServerAliveInterval=1 \
+        -o ServerAliveCountMax=10 \
+        "${user}@${host}" "$_rc"
     # Restore a sensible title after the session ends.
     _set_title "ssh-menu"
 }
