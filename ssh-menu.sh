@@ -332,11 +332,6 @@ _connect_ssh() {
     _rc+='l=$(cat /proc/loadavg 2>/dev/null|cut -d" " -f1-3);'
     _rc+='m=$(free -m 2>/dev/null|awk "/^Mem:/{printf \"%d/%dMB\",\$3,\$2}");'
     _rc+='printf "\033]0;%s%s%s\007" "$h" "${l:+ | load: $l}" "${m:+ | mem: $m}";'
-#----------------------------------------------------------------------
-# Added to manually display /etc/issue and motd, before and upon login:
-#----------------------------------------------------------------------
-    _rc+='[ -f /etc/issue ] && cat /etc/issue;'
-    _rc+='[ -f /etc/motd ] && cat /etc/motd;'
     _rc+='exec "${SHELL:-bash}" -l'
     ssh -p "$port" -t \
         -o ServerAliveInterval=1 \
